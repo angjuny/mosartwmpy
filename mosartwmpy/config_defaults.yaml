@@ -114,10 +114,14 @@ simulation:
 grid:
     # path to the grid domain file; can be absolute or relative to the source code root
     path: ./input/domains/mosart_conus_nldas_grid.nc
+    # flag to indicate whether the grid is 2D (lat/lon) or 1D (gridcell)
+    is_grid_2d: true
     # longitude field name
     longitude: lon
     # latitude field name
     latitude: lat
+    # grid cell field name; only needed if is_grid_2d is false
+    gridcell: gridcell
     # limit simulation to particular basins
     #   ~ for all, or
     #   a list of coordinate pairs to simulate only basins that include them, i.e:
@@ -187,6 +191,8 @@ runoff:
     longitude: lon
     # latitude field name
     latitude: lat
+    # grid cell field name; only needed if is_grid_2d is false
+    gridcell: gridcell
     # time field name
     time: time
     # variables

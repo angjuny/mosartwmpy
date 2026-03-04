@@ -81,42 +81,60 @@ def write_output(self):
     filename += '.nc'
 
     # create the data frame
-    latitude = self.grid.latitude
-    longitude = self.grid.longitude
-    if self.config.get('grid.unmask_output', True):
-        longitude, latitude = np.meshgrid(
-            self.grid.unique_longitudes,
-            self.grid.unique_latitudes
+    if self.config.get('grid.is_grid_2d', True):
+        latitude = self.grid.latitude
+        longitude = self.grid.longitude
+        if self.config.get('grid.unmask_output', True):
+            longitude, latitude = np.meshgrid(
+                self.grid.unique_longitudes,
+                self.grid.unique_latitudes
+            )
+            longitude = longitude.flatten()
+            latitude = latitude.flatten()
+        frame = pd.DataFrame(
+            latitude,
+            columns=['latitude']
+        ).join(
+            pd.DataFrame(longitude, columns=['longitude'])
+        ).join(
+            pd.DataFrame(np.full(latitude.size, pd.to_datetime(true_date)), columns=['time'])
+        ).join(
+            self.output_buffer
+        ).rename(columns={
+            'latitude': 'lat',
+            'longitude': 'lon'
+        }).set_index(
+            ['time', 'lat', 'lon']
+        ).to_xarray().astype(
+            np.float32
         )
-        longitude = longitude.flatten()
-        latitude = latitude.flatten()
-    frame = pd.DataFrame(
-        latitude,
-        columns=['latitude']
-    ).join(
-        pd.DataFrame(longitude, columns=['longitude'])
-    ).join(
-        pd.DataFrame(np.full(latitude.size, pd.to_datetime(true_date)), columns=['time'])
-    ).join(
-        self.output_buffer
-    ).rename(columns={
-        'latitude': 'lat',
-        'longitude': 'lon'
-    }).set_index(
-        ['time', 'lat', 'lon']
-    ).to_xarray().astype(
-        np.float32
-    )
 
-    # restrict lat/lon to 32 bit precision
-    frame = frame.assign_coords(
-        lat=frame.lat.astype(np.float32),
-        lon=frame.lon.astype(np.float32)
-    )
+        # restrict lat/lon to 32 bit precision
+        frame = frame.assign_coords(
+            lat=frame.lat.astype(np.float32),
+            lon=frame.lon.astype(np.float32)
+        )
+    else:
+        gridcell = self.grid.gridcell
+        if self.config.get('grid.unmask_output', True):
+            gridcell = np.array(self.grid.gridcell_list)
+        frame = pd.DataFrame(
+            gridcell,
+            columns=[self.config.get('grid.gridcell')]
+        ).join(
+            pd.DataFrame(np.full(gridcell.size, pd.to_datetime(true_date)), columns=['time'])
+        ).join(
+            self.output_buffer
+        ).set_index(
+            ['time', self.config.get('grid.gridcell')]
+        ).to_xarray().astype(
+            np.float32
+        )
 
     # assign metadata
-    frame.lat.attrs['units'] = 'degrees_north'
-    frame.lon.attrs['units'] = 'degrees_east'
+    if self.config.get('grid.is_grid_2d', True):
+        frame.lat.attrs['units'] = 'degrees_north'
+        frame.lon.attrs['units'] = 'degrees_east'
     for output in self.config.get('simulation.output'):
         if getattr(self.state, output.get('variable'), None) is not None and len(getattr(self.state, output.get('variable'))) > 0:
             if output.get('long_name'):
@@ -135,25 +153,36 @@ def write_output(self):
         nc.close()
     else:
         if len(self.config.get('simulation.grid_output', [])) > 0:
-            grid_frame = pd.DataFrame(
-                latitude, columns=['latitude']
-            ).join(
-                pd.DataFrame(longitude, columns=['longitude'])
-            )
+            if self.config.get('grid.is_grid_2d', True):
+                grid_frame = pd.DataFrame(
+                    latitude, columns=['latitude']
+                ).join(
+                    pd.DataFrame(longitude, columns=['longitude'])
+                )
+            else:
+                grid_frame = pd.DataFrame(
+                    gridcell, columns=[self.config.get('grid.gridcell')]
+                )
+            
             for grid_output in self.config.get('simulation.grid_output'):
                 if getattr(self.grid, grid_output.get('variable'), None) is not None:
                     data = getattr(self.grid, grid_output.get('variable'))
                     if self.config.get('grid.unmask_output', True):
                         data = self.unmask(data)
                     grid_frame = grid_frame.join(pd.DataFrame(data, columns=[grid_output.get('variable')]))
-            grid_frame = grid_frame.rename(columns={
-                'latitude': 'lat',
-                'longitude': 'lon'
-            }).set_index(['lat', 'lon']).to_xarray()
-            grid_frame = grid_frame.assign_coords(
-                lat=grid_frame.lat.astype(np.float32),
-                lon=grid_frame.lon.astype(np.float32)
-            )
+
+            if self.config.get('grid.is_grid_2d', True):
+                grid_frame = grid_frame.rename(columns={
+                    'latitude': 'lat',
+                    'longitude': 'lon'
+                }).set_index(['lat', 'lon']).to_xarray()
+                grid_frame = grid_frame.assign_coords(
+                    lat=grid_frame.lat.astype(np.float32),
+                    lon=grid_frame.lon.astype(np.float32)
+                )
+            else:
+                grid_frame = grid_frame.set_index([self.config.get('grid.gridcell')]).to_xarray()
+            
             for grid_output in self.config.get('simulation.grid_output'):
                 if getattr(self.grid, grid_output.get('variable'), None) is not None:
                     frame = frame.assign({

@@ -29,6 +29,8 @@ class Grid:
     downstream_id: np.ndarray = np.empty(0)
     longitude: np.ndarray = np.empty(0)
     latitude: np.ndarray = np.empty(0)
+    gridcell: np.ndarray = np.empty(0) # can be masked
+    gridcell_list: list = list() # need unmasked index, so keep it as a list
     unique_longitudes: np.ndarray = np.empty(0)
     unique_latitudes: np.ndarray = np.empty(0)
     cell_count: int = 0
@@ -128,18 +130,29 @@ class Grid:
         # open dataset
         grid_dataset = open_dataset(config.get('grid.path'))
     
-        # create grid from longitude and latitude dimensions
-        self.unique_longitudes = np.array(grid_dataset[config.get('grid.longitude')])
-        self.unique_latitudes = np.array(grid_dataset[config.get('grid.latitude')])
-        self.cell_count = self.unique_longitudes.size * self.unique_latitudes.size
-        self.longitude_spacing = abs(self.unique_longitudes[1] - self.unique_longitudes[0])
-        self.latitude_spacing = abs(self.unique_latitudes[1] - self.unique_latitudes[0])
-        self.longitude, self.latitude = np.meshgrid(
-            grid_dataset[config.get('grid.longitude')],
-            grid_dataset[config.get('grid.latitude')]
-        )
-        self.longitude = self.longitude.flatten()
-        self.latitude = self.latitude.flatten()
+        if config.get('grid.is_grid_2d'):
+            # create grid from longitude and latitude dimensions
+            self.unique_longitudes = np.array(grid_dataset[config.get('grid.longitude')])
+            self.unique_latitudes = np.array(grid_dataset[config.get('grid.latitude')])
+            self.cell_count = self.unique_longitudes.size * self.unique_latitudes.size
+            self.longitude_spacing = abs(self.unique_longitudes[1] - self.unique_longitudes[0])
+            self.latitude_spacing = abs(self.unique_latitudes[1] - self.unique_latitudes[0])
+            self.longitude, self.latitude = np.meshgrid(
+                grid_dataset[config.get('grid.longitude')],
+                grid_dataset[config.get('grid.latitude')]
+            )
+            self.longitude = self.longitude.flatten()
+            self.latitude = self.latitude.flatten()
+        else:
+            if config.get('grid.longitude') in grid_dataset.data_vars:
+                self.unique_longitudes = np.array(grid_dataset[config.get('grid.longitude')])
+                self.longitude = self.unique_longitudes
+            if config.get('grid.latitude') in grid_dataset.data_vars:
+                self.unique_latitudes = np.array(grid_dataset[config.get('grid.latitude')])
+                self.latitude = self.unique_latitudes
+            self.gridcell = np.array(grid_dataset[config.get('grid.gridcell')])
+            self.gridcell_list = self.gridcell.tolist()
+            self.cell_count = self.gridcell.size
         
         for key, value in config.get('grid.variables').items():
             setattr(self, key, np.array(grid_dataset[value]).flatten())
@@ -226,32 +239,42 @@ class Grid:
         # if a subdomain is desired, update mosart_mask to disable out-of-subdomain cells
         subdomain = config.get('grid.subdomain', None)
         if subdomain is not None:
-            if not isinstance(subdomain, list):
-                subdomain = [subdomain]
-            outlet_ids = set()
-            for point in subdomain:
-                point = [float(x) for x in point.split(',')]
-                distance = Grid.haversine(self.latitude, self.longitude, point[0], point[1])
-                index = np.argmin(distance)
-                outlet_ids.add(self.outlet_id[index])
-            self.mosart_mask = np.where(
-                np.in1d(self.outlet_id, list(outlet_ids)),
-                self.mosart_mask,
-                0
-            )
-
-        # recalculate area to fill in missing values
-        # assumes grid spacing is in degrees and uniform
-        deg2rad = np.pi / 180.0
-        self.area = np.where(
-            self.local_drainage_area <= 0,
-            np.absolute(
-                parameters.radius_earth ** 2 * deg2rad * self.longitude_spacing * (
-                    np.sin(deg2rad * (self.latitude + 0.5 * self.latitude_spacing)) - np.sin(deg2rad * (self.latitude - 0.5 * self.latitude_spacing))
+            # skip if longitude and latitude are not available, particularly for 1D grid input case
+            if len(self.longitude) > 0 and len(self.latitude) > 0:
+                if not isinstance(subdomain, list):
+                    subdomain = [subdomain]
+                outlet_ids = set()
+                for point in subdomain:
+                    point = [float(x) for x in point.split(',')]
+                    distance = Grid.haversine(self.latitude, self.longitude, point[0], point[1])
+                    index = np.argmin(distance)
+                    outlet_ids.add(self.outlet_id[index])
+                self.mosart_mask = np.where(
+                    np.in1d(self.outlet_id, list(outlet_ids)),
+                    self.mosart_mask,
+                    0
                 )
-            ),
-            self.local_drainage_area,
-        )
+
+        if config.get('grid.is_grid_2d'):
+            # recalculate area to fill in missing values
+            # assumes grid spacing is in degrees and uniform
+            deg2rad = np.pi / 180.0
+            self.area = np.where(
+                self.local_drainage_area <= 0,
+                np.absolute(
+                    parameters.radius_earth ** 2 * deg2rad * self.longitude_spacing * (
+                        np.sin(deg2rad * (self.latitude + 0.5 * self.latitude_spacing)) - np.sin(deg2rad * (self.latitude - 0.5 * self.latitude_spacing))
+                    )
+                ),
+                self.local_drainage_area,
+            )
+        else:
+            # for 1D grid input case, if local drainage area is not provided, estimate it as the average of the positive local drainage area values and apply it to cells with zero or negative local drainage area
+            self.area = np.where(
+                self.local_drainage_area <= 0,
+                self.local_drainage_area[self.local_drainage_area > 0].mean(),
+                self.local_drainage_area,
+            )
         
         # update zero slopes to a small number
         self.hillslope = np.where(

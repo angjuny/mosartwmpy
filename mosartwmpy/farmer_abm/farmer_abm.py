@@ -21,8 +21,10 @@ class FarmerABM:
         # Get variables from the config.
         self.demand = self.config.get('water_management.demand.demand')
         self.dependent_cell_index = self.config.get('water_management.reservoirs.dependencies.variables.dependent_cell_index')
+        self.is_grid_2d = self.config.get('grid.is_grid_2d', True)
         self.latitude = self.config.get('grid.latitude')
         self.longitude = self.config.get('grid.longitude')
+        self.gridcell = self.config.get('grid.gridcell')
         self.mu = self.config.get('water_management.demand.farmer_abm.mu', 0.2)
         self.reservoir_grid_index = self.config.get('water_management.reservoirs.parameters.variables.reservoir_grid_index')
         self.reservoir_id = self.config.get('water_management.reservoirs.parameters.variables.reservoir_id')
@@ -176,21 +178,33 @@ class FarmerABM:
             demand_per_nldas_id.loc[results_pivot.index,self.demand] = results_pivot.calculated_water_demand.values
 
             # Convert pandas DataFrame to xarray Dataset to more easily output to a NetCDF.
-            demand_ABM = demand_per_nldas_id.totalDemand.values.reshape(
-                len(self.model.grid.unique_latitudes),
-                len(self.model.grid.unique_longitudes),
-                order='C'
-            )
-            demand_ABM = xr.Dataset(
-                data_vars={
-                    self.demand: ([self.time, self.latitude, self.longitude], np.array([demand_ABM]))
-                },
-                coords={
-                    self.longitude: ([self.longitude], self.model.grid.unique_longitudes),
-                    self.latitude: ([self.latitude], self.model.grid.unique_latitudes),
-                    self.time: ([self.time], [np.datetime64(f"{year}-01")]),
-                }
-            )
+            if self.is_grid_2d:
+                demand_ABM = demand_per_nldas_id.totalDemand.values.reshape(
+                    len(self.model.grid.unique_latitudes),
+                    len(self.model.grid.unique_longitudes),
+                    order='C'
+                )
+                demand_ABM = xr.Dataset(
+                    data_vars={
+                        self.demand: ([self.time, self.latitude, self.longitude], np.array([demand_ABM]))
+                    },
+                    coords={
+                        self.longitude: ([self.longitude], self.model.grid.unique_longitudes),
+                        self.latitude: ([self.latitude], self.model.grid.unique_latitudes),
+                        self.time: ([self.time], [np.datetime64(f"{year}-01")]),
+                    }
+                )
+            else:
+                demand_ABM = demand_per_nldas_id.totalDemand.values
+                demand_ABM = xr.Dataset(
+                    data_vars={
+                        self.demand: ([self.time, self.gridcell], np.array([demand_ABM]))
+                    },
+                    coords={
+                        self.gridcell: ([self.gridcell], self.model.grid.gridcell_list),
+                        self.time: ([self.time], [np.datetime64(f"{year}-01")]),
+                    }
+                )
             logging.info(f"Outputting demand file to: {output_dir}.")
             demand_ABM.to_netcdf(f"{output_dir}/{self.config.get('simulation.name')}_farmer_abm_demand_{year}.nc")
             logging.info(f"Wrote new demand files for year {year}.")

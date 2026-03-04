@@ -86,6 +86,10 @@ def plot_reservoir(
     end: str = None,
 ):
 
+    if not model.config.get('grid.is_grid_2d', True):
+        print('Unable to plot variable because grid is not 2D.')
+        return None
+        
     spacing = model.get_grid_spacing()
     offset_x = spacing[0] / 2
     offset_y = spacing[1] / 2

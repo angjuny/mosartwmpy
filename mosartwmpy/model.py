@@ -266,6 +266,10 @@ class Model(Bmi):
             show: bool = True,
     ):
         """Display a colormap of a spatial variable at the current timestep."""
+        if not self.config.get('grid.is_grid_2d', True):
+            logging.error('Unable to plot variable because grid is not 2D.')
+            return None
+        
         data = self.get_value_ptr(variable).reshape(self.get_grid_shape())
         if log_scale:
             data = np.where(data > 0, data, np.nan)
